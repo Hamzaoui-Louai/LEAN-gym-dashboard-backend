@@ -13,27 +13,27 @@ class AuthTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_registration_returns_json_and_logs_the_user_in(): void
+    private function authHeader(string $token): array
+    {
+        return ['Authorization' => 'Bearer '.$token];
+    }
+
+    public function test_registration_returns_token_and_sends_verification_email(): void
     {
         Notification::fake();
 
-        $response = $this->postJson('/register', [
+        $response = $this->postJson('/api/register', [
             'name' => 'Lean Admin',
             'email' => 'admin@example.com',
             'password' => 'password123',
             'password_confirmation' => 'password123',
         ]);
 
-        $response->assertStatus(201);
-
-        $this->assertDatabaseHas('users', [
-            'email' => 'admin@example.com',
-            'email_verified_at' => null,
-        ]);
-
-        $this->getJson('/api/user')
-            ->assertJson(['email' => 'admin@example.com'])
-            ->assertJsonPath('email_verified_at', null);
+        $response->assertStatus(201)
+            ->assertJsonStructure(['access_token', 'token_type', 'expires_in', 'user'])
+            ->assertJsonPath('token_type', 'bearer')
+            ->assertJsonPath('user.email', 'admin@example.com')
+            ->assertJsonPath('user.email_verified_at', null);
 
         Notification::assertSentTo(
             User::where('email', 'admin@example.com')->first(),
@@ -43,14 +43,14 @@ class AuthTest extends TestCase
 
     public function test_registration_requires_name_and_password_confirmation(): void
     {
-        $this->postJson('/register', [
+        $this->postJson('/api/register', [
             'email' => 'admin@example.com',
             'password' => 'password123',
         ])->assertUnprocessable()
             ->assertJsonValidationErrors(['name', 'password']);
     }
 
-    public function test_login_returns_json_response(): void
+    public function test_login_returns_token_and_grant_access_to_user_endpoint(): void
     {
         User::create([
             'name' => 'Lean Admin',
@@ -58,18 +58,23 @@ class AuthTest extends TestCase
             'password' => bcrypt('password123'),
         ]);
 
-        $this->postJson('/login', [
+        $response = $this->postJson('/api/login', [
             'email' => 'admin@example.com',
             'password' => 'password123',
-        ])->assertOk()
-            ->assertJson(['two_factor' => false]);
+        ]);
 
-        $this->getJson('/api/user')
+        $response->assertOk()
+            ->assertJsonStructure(['access_token', 'token_type', 'expires_in', 'user'])
+            ->assertJsonPath('user.email', 'admin@example.com');
+
+        $token = $response->json('access_token');
+
+        $this->getJson('/api/user', $this->authHeader($token))
             ->assertOk()
             ->assertJson(['email' => 'admin@example.com']);
     }
 
-    public function test_login_with_invalid_credentials_fails(): void
+    public function test_login_with_invalid_credentials_returns_401(): void
     {
         User::create([
             'name' => 'Lean Admin',
@@ -77,23 +82,33 @@ class AuthTest extends TestCase
             'password' => bcrypt('password123'),
         ]);
 
-        $this->postJson('/login', [
+        $this->postJson('/api/login', [
             'email' => 'admin@example.com',
             'password' => 'wrong-password',
-        ])->assertUnprocessable();
+        ])->assertUnauthorized();
     }
 
-    public function test_logout_invalidates_the_session(): void
+    public function test_user_endpoint_requires_a_token(): void
     {
-        $user = User::create([
+        $this->getJson('/api/user')->assertUnauthorized();
+    }
+
+    public function test_logout_invalidates_the_token(): void
+    {
+        User::create([
             'name' => 'Lean Admin',
             'email' => 'admin@example.com',
             'password' => bcrypt('password123'),
         ]);
 
-        $this->actingAs($user)->postJson('/logout')->assertNoContent();
+        $token = $this->postJson('/api/login', [
+            'email' => 'admin@example.com',
+            'password' => 'password123',
+        ])->json('access_token');
 
-        $this->getJson('/api/user')->assertUnauthorized();
+        $this->postJson('/api/logout', [], $this->authHeader($token))->assertNoContent();
+
+        $this->getJson('/api/user', $this->authHeader($token))->assertUnauthorized();
     }
 
     public function test_email_verification_link_marks_email_as_verified(): void
@@ -124,8 +139,12 @@ class AuthTest extends TestCase
             'password' => bcrypt('password123'),
         ]);
 
-        $this->actingAs($user)
-            ->postJson('/email/verification-notification')
+        $token = $this->postJson('/api/login', [
+            'email' => 'admin@example.com',
+            'password' => 'password123',
+        ])->json('access_token');
+
+        $this->postJson('/api/email/verification-notification', [], $this->authHeader($token))
             ->assertStatus(202);
 
         Notification::assertSentTo($user, VerifyEmail::class);
@@ -142,8 +161,12 @@ class AuthTest extends TestCase
         ]);
         $user->markEmailAsVerified();
 
-        $this->actingAs($user)
-            ->postJson('/email/verification-notification')
+        $token = $this->postJson('/api/login', [
+            'email' => 'admin@example.com',
+            'password' => 'password123',
+        ])->json('access_token');
+
+        $this->postJson('/api/email/verification-notification', [], $this->authHeader($token))
             ->assertNoContent();
 
         Notification::assertNothingSent();

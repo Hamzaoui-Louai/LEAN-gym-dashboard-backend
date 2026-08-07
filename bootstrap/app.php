@@ -14,11 +14,7 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        $middleware->statefulApi();
-
-        $middleware->redirectGuestsTo(
-            fn (Request $request) => config('app.frontend_url').'/login',
-        );
+        $middleware->redirectGuestsTo(fn () => config('app.frontend_url').'/login');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(
