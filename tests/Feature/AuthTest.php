@@ -124,9 +124,65 @@ class AuthTest extends TestCase
             'hash' => sha1($user->getEmailForVerification()),
         ]);
 
-        $this->actingAs($user)->getJson($url)->assertNoContent();
+        $this->getJson($url)->assertNoContent();
 
         $this->assertNotNull($user->fresh()->email_verified_at);
+    }
+
+    public function test_email_verification_link_redirects_browser_to_frontend(): void
+    {
+        $user = User::create([
+            'name' => 'Lean Admin',
+            'email' => 'admin@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $url = URL::signedRoute('verification.verify', [
+            'id' => $user->id,
+            'hash' => sha1($user->getEmailForVerification()),
+        ]);
+
+        $this->get($url)
+            ->assertRedirect(config('app.frontend_url').'/email-verified');
+
+        $this->assertNotNull($user->fresh()->email_verified_at);
+    }
+
+    public function test_email_verification_link_with_invalid_hash_is_rejected(): void
+    {
+        $user = User::create([
+            'name' => 'Lean Admin',
+            'email' => 'admin@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $url = URL::signedRoute('verification.verify', [
+            'id' => $user->id,
+            'hash' => sha1('wrong-email@example.com'),
+        ]);
+
+        $this->getJson($url)->assertForbidden();
+
+        $this->assertNull($user->fresh()->email_verified_at);
+    }
+
+    public function test_email_verification_link_with_expired_signature_is_rejected(): void
+    {
+        $user = User::create([
+            'name' => 'Lean Admin',
+            'email' => 'admin@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $url = URL::temporarySignedRoute(
+            'verification.verify',
+            now()->subMinutes(2),
+            ['id' => $user->id, 'hash' => sha1($user->getEmailForVerification())],
+        );
+
+        $this->getJson($url)->assertForbidden();
+
+        $this->assertNull($user->fresh()->email_verified_at);
     }
 
     public function test_verification_notification_can_be_resent(): void
