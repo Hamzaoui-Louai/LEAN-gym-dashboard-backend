@@ -2,12 +2,13 @@
 
 namespace App\Models;
 
+use App\Enums\PaymentStatus;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['member_subscription_id', 'amount', 'paid_at'])]
+#[Fillable(['member_subscription_id', 'amount', 'paid_at', 'method', 'status'])]
 class Payment extends Model
 {
     use HasFactory;
@@ -17,6 +18,7 @@ class Payment extends Model
         return [
             'amount' => 'decimal:2',
             'paid_at' => 'datetime',
+            'status' => PaymentStatus::class,
         ];
     }
 

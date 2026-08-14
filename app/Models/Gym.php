@@ -2,16 +2,24 @@
 
 namespace App\Models;
 
+use App\Enums\GymStatus;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['user_id', 'name', 'phone', 'email', 'address', 'logo', 'opening_time', 'closing_time'])]
+#[Fillable(['user_id', 'name', 'phone', 'email', 'address', 'logo', 'opening_time', 'closing_time', 'status'])]
 class Gym extends Model
 {
     use HasFactory;
+
+    protected function casts(): array
+    {
+        return [
+            'status' => GymStatus::class,
+        ];
+    }
 
     public function user(): BelongsTo
     {

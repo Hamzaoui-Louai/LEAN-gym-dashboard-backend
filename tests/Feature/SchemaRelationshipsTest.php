@@ -3,7 +3,12 @@
 namespace Tests\Feature;
 
 use App\Enums\EquipmentStatus;
+use App\Enums\GymStatus;
+use App\Enums\MemberStatus;
+use App\Enums\PaymentStatus;
+use App\Enums\StaffStatus;
 use App\Enums\SubscriptionPlan;
+use App\Models\Checkin;
 use App\Models\Equipment;
 use App\Models\Gym;
 use App\Models\Member;
@@ -304,5 +309,123 @@ class SchemaRelationshipsTest extends TestCase
                 QueryException::class,
             );
         }
+    }
+
+    public function test_status_method_and_checkin_columns_are_defaulted_and_constrained(): void
+    {
+        $user = User::create([
+            'name' => 'Gym Owner',
+            'email' => 'owner@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $gym = Gym::create([
+            'user_id' => $user->id,
+            'name' => 'LEAN Downtown',
+        ]);
+
+        $staff = Staff::create([
+            'gym_id' => $gym->id,
+            'first_name' => 'Jane',
+            'last_name' => 'Doe',
+            'position' => 'Coach',
+        ]);
+
+        $member = Member::create([
+            'gym_id' => $gym->id,
+            'first_name' => 'John',
+            'last_name' => 'Smith',
+            'joined_at' => now(),
+        ]);
+
+        $checkin = Checkin::create([
+            'member_id' => $member->id,
+            'date' => today(),
+            'check_in' => '07:30',
+        ]);
+
+        $this->assertSame(MemberStatus::Active, $member->fresh()->status);
+        $this->assertSame(StaffStatus::Active, $staff->fresh()->status);
+        $this->assertSame(GymStatus::Active, $gym->fresh()->status);
+
+        $memberSubscription = MemberSubscription::create([
+            'member_id' => $member->id,
+            'plan_name' => 'Monthly',
+            'price' => 49.99,
+            'starts_at' => now(),
+            'ends_at' => now()->addMonth(),
+        ]);
+
+        $payment = Payment::create([
+            'member_subscription_id' => $memberSubscription->id,
+            'amount' => 49.99,
+            'paid_at' => now(),
+        ]);
+
+        $payslip = Payslip::create([
+            'staff_id' => $staff->id,
+            'month' => now()->month,
+            'year' => now()->year,
+            'amount' => 2500.00,
+            'paid_at' => now(),
+        ]);
+
+        $this->assertSame('Card', $payment->fresh()->method);
+        $this->assertSame(PaymentStatus::Paid, $payment->fresh()->status);
+        $this->assertSame('Card', $payslip->fresh()->method);
+        $this->assertSame(PaymentStatus::Paid, $payslip->fresh()->status);
+
+        $this->assertThrows(
+            fn () => DB::table('members')->insert([
+                'gym_id' => $gym->id,
+                'first_name' => 'Bad',
+                'last_name' => 'Status',
+                'joined_at' => now(),
+                'status' => 'gold',
+            ]),
+            QueryException::class,
+        );
+
+        $this->assertThrows(
+            fn () => DB::table('staff')->insert([
+                'gym_id' => $gym->id,
+                'first_name' => 'Bad',
+                'last_name' => 'Status',
+                'position' => 'Coach',
+                'status' => 'sacked',
+            ]),
+            QueryException::class,
+        );
+
+        $otherUser = User::create([
+            'name' => 'Other Owner',
+            'email' => 'other@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $this->assertThrows(
+            fn () => DB::table('gyms')->insert([
+                'user_id' => $otherUser->id,
+                'name' => 'LEAN Uptown',
+                'status' => 'closed_soon',
+            ]),
+            QueryException::class,
+        );
+
+        $this->assertThrows(
+            fn () => DB::table('payments')->insert([
+                'member_subscription_id' => $memberSubscription->id,
+                'amount' => 10.00,
+                'paid_at' => now(),
+                'status' => 'refunded',
+            ]),
+            QueryException::class,
+        );
+
+        $this->assertTrue($member->checkins->contains($checkin));
+
+        $member->delete();
+
+        $this->assertDatabaseCount('checkins', 0);
     }
 }

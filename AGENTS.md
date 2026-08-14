@@ -28,6 +28,15 @@
 - `bootstrap/app.php` sets `redirectGuestsTo(FRONTEND_URL.'/login')`. This overrides Laravel 13's default `route('login')` — without it, unauthenticated non-JSON requests throw `RouteNotFoundException` (there is no `login` route).
 - JSON error rendering is enabled only for `api/*` paths or `expectsJson()` (`shouldRenderJsonWhen` in `bootstrap/app.php`).
 
+## Domain model (gym management)
+- `routes/api.php` `auth:api` group exposes dashboard endpoints (gym-scoped): `GET/POST/PUT/DELETE /members` (CRUD accepts the frontend shape: `name` is split to `first_name`/`last_name`, `membership{plan,price,started_at,ends_at}` maps to the latest `MemberSubscription`, which is created/updated in the same call), `GET /staff`, `GET /equipment`, `GET /equipment/repairs`, `GET /checkins`, `POST /checkins`, `POST /checkins/{id}/check-out`, `GET /finances/overview?period=this_week|this_month|last_3_months|last_6_months|this_year`. Frontend consumes these via `frontend/src/lib/dashboardApi.js`; resources in `app/Http/Resources` are shaped to match the frontend mocks.
+- Schema graph (all `cascadeOnDelete` from user down): `User` → one `UserSubscription` + one `Gym`; `Gym` → `Staff` (→ `Payslip`), `Member` (→ `MemberSubscription` → `Payment`, → `Checkin`), `Equipment` (→ `PurchaseBill`, `RepairBill`). `member_subscriptions.ends_at` is **nullable** (Pay-as-you-go); `checkins.check_out` is nullable (null = member currently inside).
+- Backed string enums in `app/Enums` mirror DB `enum` columns: `SubscriptionPlan` (`free_trial|basic|pro|enterprise`), `EquipmentStatus` (`available|maintenance|broken`), plus `MemberStatus`/`StaffStatus`/`GymStatus` (`active|frozen|expired`, staff adds `on_leave|departed`), `PaymentStatus` (`paid|pending|failed`). `payments`/`payslips` also have a `method` string (default `Card`). DB CHECK constraints are enforced on SQLite too (modern Laravel), not just pgsql.
+- Check-in guard: `POST /api/checkins` 422s unless the member has an active subscription (latest `MemberSubscription` `starts_at <= today` and `ends_at` null or `>= today`) and no open check-in today. `checkOut` 422s if already checked out, 404 for another gym's check-in.
+- Money is stored as decimal strings (tests assert `'49.99'`), not floats. API resources return floats/ints (rounded) to match the frontend mocks; `FinanceOverviewService` returns a monthly series ending at the current month.
+- Dev seed: `DB_SEED_USER=you@example.com php artisan db:seed --class=DashboardSeeder --force` (idempotent, bulk-inserts ~1500 rows so it's fast even over the Supabase pooler). `DB_SEED_USER` is the email of the account the demo gym/data is attached to; without it the seeder defaults to creating/using `gym-owner@lean.local` / `password`. Existing target accounts are never password-rewritten (only brand-new ones get `/ password`), and when the target isn't the default owner the old owner account is deleted. Seeder wipes only the target gym's domain rows on re-run.
+- `tests/Feature/SchemaRelationshipsTest.php` is the schema-contract test (full graph, cascade delete, uniqueness, constraints) — keep it green when touching migrations. `tests/Feature/AuthTest.php` covers the JWT flow. `tests/Feature/DashboardApiTest.php` covers the dashboard endpoints, shapes, scoping, and check-in guard.
+
 ## Deploy (Render + Docker)
 - `Dockerfile` is intentionally minimal: single-stage `php:8.4-cli-alpine` + `pdo_pgsql`, runs `php artisan migrate --force` then `php artisan serve`. No nginx, no queue worker, no healthcheck → set `QUEUE_CONNECTION=sync` on Render.
 - Health check endpoint: `GET /up` (checks DB connectivity). Set Render health check path to `/up`.
@@ -35,5 +44,5 @@
 
 ## Repo notes
 - `.env`, `vendor/`, `node_modules/` gitignored; `.env` exists locally with real Supabase/JWT creds.
-- No CI, no `opencode.json`, no app seeders.
+- No CI, no `opencode.json`. Only seeder is `Database\Seeders\DashboardSeeder` (see Domain model).
 - Repo-local OpenCode skills under `.opencode/skills/` (`laravel-expert`, `php-pro`, `api-*`, `database-*`, security) — load the matching skill before API/DB/security work.
