@@ -14,6 +14,7 @@ use Carbon\Carbon;
 use Database\Factories\MemberSubscriptionFactory;
 use Database\Factories\StaffFactory;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
@@ -146,6 +147,8 @@ class DashboardSeeder extends Seeder
         ]);
 
         $this->resetGymData($gym);
+
+        Cache::flush();
 
         $this->seedMembers($gym);
         $this->seedStaff($gym);

@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CheckinController;
+use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\EquipmentController;
 use App\Http\Controllers\Api\FinanceController;
 use App\Http\Controllers\Api\MemberController;
@@ -27,4 +28,9 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/checkins', [CheckinController::class, 'store']);
     Route::post('/checkins/{id}/check-out', [CheckinController::class, 'checkOut']);
     Route::get('/finances/overview', [FinanceController::class, 'overview']);
+
+    Route::get('/dashboard/overview', [DashboardController::class, 'overview']);
+    Route::get('/dashboard/insights', [DashboardController::class, 'insights']);
+    Route::get('/dashboard/operations', [DashboardController::class, 'operations']);
+    Route::get('/dashboard/finances', [DashboardController::class, 'finances']);
 });

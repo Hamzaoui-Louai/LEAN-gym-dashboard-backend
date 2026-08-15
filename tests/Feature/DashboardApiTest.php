@@ -81,7 +81,7 @@ class DashboardApiTest extends TestCase
 
     public function test_dashboard_endpoints_require_authentication(): void
     {
-        foreach (['/api/members', '/api/staff', '/api/equipment', '/api/equipment/repairs', '/api/checkins', '/api/finances/overview'] as $endpoint) {
+        foreach (['/api/members', '/api/staff', '/api/equipment', '/api/equipment/repairs', '/api/checkins', '/api/finances/overview', '/api/dashboard/overview', '/api/dashboard/insights', '/api/dashboard/operations', '/api/dashboard/finances'] as $endpoint) {
             $this->getJson($endpoint)->assertUnauthorized();
         }
 
@@ -551,5 +551,202 @@ class DashboardApiTest extends TestCase
         $this->getJson('/api/finances/overview?period=this_month', $this->authHeader($token))
             ->assertOk()
             ->assertJsonCount(1);
+    }
+
+    public function test_dashboard_overview_returns_counts_for_the_owners_gym_only(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $activeMember = $this->createMember($gym, ['status' => 'active']);
+        $this->createSubscription($activeMember, ['ends_at' => today()->addDays(10)]);
+        $expiredMember = $this->createMember($gym, ['status' => 'expired']);
+        $this->createSubscription($expiredMember, ['ends_at' => now()->subDay()]);
+
+        $activeMember->checkins()->create(['date' => today(), 'check_in' => '07:00']);
+        $activeMember->checkins()->create(['date' => today(), 'check_in' => '08:00', 'check_out' => '09:00']);
+
+        Staff::create([
+            'gym_id' => $gym->id,
+            'first_name' => 'Jane',
+            'last_name' => 'Doe',
+            'email' => 'jane@example.com',
+            'phone' => '+15559876543',
+            'position' => 'Coach',
+            'salary' => 2500.00,
+            'hire_date' => now()->subMonths(6),
+        ]);
+
+        Equipment::create(['gym_id' => $gym->id, 'name' => 'Treadmill X1', 'status' => EquipmentStatus::Available]);
+        Equipment::create(['gym_id' => $gym->id, 'name' => 'Smith Machine', 'status' => EquipmentStatus::Maintenance]);
+        Equipment::create(['gym_id' => $gym->id, 'name' => 'Leg Press', 'status' => EquipmentStatus::Broken]);
+
+        $otherUser = User::create([
+            'name' => 'Other Owner',
+            'email' => 'other@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+        $otherGym = Gym::create(['user_id' => $otherUser->id, 'name' => 'Other Gym']);
+        $this->createMember($otherGym, ['status' => 'active']);
+
+        $this->getJson('/api/dashboard/overview', $this->authHeader($token))
+            ->assertOk()
+            ->assertJsonPath('totalMembers', 2)
+            ->assertJsonPath('activeMembers', 1)
+            ->assertJsonPath('expiringMemberships', 1)
+            ->assertJsonPath('expiredMembers', 1)
+            ->assertJsonPath('totalStaff', 1)
+            ->assertJsonPath('activeStaff', 1)
+            ->assertJsonPath('totalEquipment', 3)
+            ->assertJsonPath('availableEquipment', 1)
+            ->assertJsonPath('maintenanceEquipment', 1)
+            ->assertJsonPath('brokenEquipment', 1)
+            ->assertJsonPath('todayCheckins', 2)
+            ->assertJsonPath('insideNow', 1);
+    }
+
+    public function test_dashboard_insights_returns_revenue_roster_and_recent_checkins(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $monthly = $this->createMember($gym, ['status' => 'active']);
+        $subscription = $this->createSubscription($monthly, ['starts_at' => now()]);
+        Payment::create([
+            'member_subscription_id' => $subscription->id,
+            'amount' => 49.99,
+            'paid_at' => now(),
+            'status' => 'paid',
+        ]);
+
+        $annual = $this->createMember($gym, ['status' => 'active']);
+        $this->createSubscription($annual, ['plan_name' => 'Annual']);
+
+        $monthly->checkins()->create(['date' => today(), 'check_in' => '07:30']);
+
+        $otherUser = User::create([
+            'name' => 'Other Owner',
+            'email' => 'other@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+        $otherGym = Gym::create(['user_id' => $otherUser->id, 'name' => 'Other Gym']);
+        $otherMember = $this->createMember($otherGym);
+        $otherMember->checkins()->create(['date' => today(), 'check_in' => '07:00']);
+
+        $response = $this->getJson('/api/dashboard/insights', $this->authHeader($token));
+
+        $response->assertOk()
+            ->assertJsonPath('activeMembers', 2)
+            ->assertJsonPath('todayCheckins', 1)
+            ->assertJsonPath('insideNow', 1)
+            ->assertJsonPath('monthRevenue', 49.99)
+            ->assertJsonPath('recentCheckins.0.member', 'John Smith')
+            ->assertJsonPath('recentCheckins.0.check_out', null);
+
+        $roster = collect($response->json('rosterDonut'))->keyBy('label');
+        $this->assertSame(1, $roster['Monthly']['value']);
+        $this->assertSame(1, $roster['Annual']['value']);
+
+        $membershipRevenue = collect($response->json('membershipRevenue'))->keyBy('plan');
+        $this->assertSame(50, $membershipRevenue['Monthly']['value']);
+    }
+
+    public function test_dashboard_operations_returns_payroll_and_recent_activity(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $coach = Staff::create([
+            'gym_id' => $gym->id,
+            'first_name' => 'Jane',
+            'last_name' => 'Doe',
+            'email' => 'jane@example.com',
+            'phone' => '+15559876543',
+            'position' => 'Coach',
+            'salary' => 2500.00,
+            'hire_date' => now()->subMonths(6),
+        ]);
+
+        Payslip::create([
+            'staff_id' => $coach->id,
+            'month' => now()->month,
+            'year' => now()->year,
+            'amount' => 2500.00,
+            'paid_at' => now(),
+        ]);
+
+        Staff::create([
+            'gym_id' => $gym->id,
+            'first_name' => 'On',
+            'last_name' => 'Leave',
+            'email' => 'onleave@example.com',
+            'position' => 'Front Desk',
+            'salary' => 2000.00,
+            'hire_date' => now()->subMonths(2),
+            'status' => 'on_leave',
+        ]);
+
+        $treadmill = Equipment::create([
+            'gym_id' => $gym->id,
+            'name' => 'Treadmill X1',
+            'status' => EquipmentStatus::Available,
+        ]);
+
+        RepairBill::create([
+            'equipment_id' => $treadmill->id,
+            'amount' => 85.50,
+            'repair_date' => now()->subMonth(),
+            'description' => 'Replaced cable',
+        ]);
+
+        $this->getJson('/api/dashboard/operations', $this->authHeader($token))
+            ->assertOk()
+            ->assertJsonPath('totalStaff', 2)
+            ->assertJsonPath('activeStaff', 1)
+            ->assertJsonPath('monthlyPayroll', 2500)
+            ->assertJsonPath('recentPayslips.0.name', 'Jane Doe')
+            ->assertJsonPath('recentPayslips.0.period', now()->format('F Y'))
+            ->assertJsonPath('recentPayslips.0.amount', 2500)
+            ->assertJsonPath('totalEquipment', 1)
+            ->assertJsonPath('availableEquipment', 1)
+            ->assertJsonPath('recentRepairs.0.equipment', 'Treadmill X1')
+            ->assertJsonPath('recentRepairs.0.cost', 85.5);
+    }
+
+    public function test_dashboard_finances_returns_revenue_expense_trend_for_own_gym(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $member = $this->createMember($gym);
+        $subscription = $this->createSubscription($member, ['starts_at' => now()]);
+        Payment::create([
+            'member_subscription_id' => $subscription->id,
+            'amount' => 49.99,
+            'paid_at' => now(),
+            'status' => 'paid',
+        ]);
+
+        $otherUser = User::create([
+            'name' => 'Other Owner',
+            'email' => 'other@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+        $otherGym = Gym::create(['user_id' => $otherUser->id, 'name' => 'Other Gym']);
+        $otherMember = $this->createMember($otherGym);
+        $otherSubscription = $this->createSubscription($otherMember);
+        Payment::create([
+            'member_subscription_id' => $otherSubscription->id,
+            'amount' => 999.00,
+            'paid_at' => now(),
+            'status' => 'paid',
+        ]);
+
+        $response = $this->getJson('/api/dashboard/finances', $this->authHeader($token));
+
+        $response->assertOk()
+            ->assertJsonPath('monthRevenue', 49.99)
+            ->assertJsonPath('monthExpenses', 0)
+            ->assertJsonPath('monthNet', 49.99)
+            ->assertJsonCount(6, 'revExpData');
+
+        $last = $response->json('revExpData')[5];
+        $this->assertSame(49.99, $last['revenue']);
     }
 }

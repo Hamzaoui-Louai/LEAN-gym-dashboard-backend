@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\MemberResource;
 use App\Models\Member;
 use App\Models\MemberSubscription;
+use App\Services\FinanceOverviewService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -17,6 +18,8 @@ class MemberController extends Controller
     private const STATUSES = ['active', 'frozen', 'expired'];
 
     private const PLANS = ['Monthly', 'Quarterly', 'Annual', 'Pay-as-you-go'];
+
+    public function __construct(private readonly FinanceOverviewService $finances) {}
 
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -50,6 +53,8 @@ class MemberController extends Controller
 
         $this->createSubscription($member, $data['membership']);
 
+        $this->finances->flush($gym);
+
         return MemberResource::make($member->load(['subscriptions.payments']))
             ->response()
             ->setStatusCode(201);
@@ -76,6 +81,10 @@ class MemberController extends Controller
 
         $this->updateSubscription($member, $data['membership']);
 
+        if ($gym = $request->user()->gym) {
+            $this->finances->flush($gym);
+        }
+
         return MemberResource::make($member->load(['subscriptions.payments']))->response();
     }
 
@@ -87,7 +96,12 @@ class MemberController extends Controller
             return response()->json(['message' => 'Member not found.'], 404);
         }
 
+        $gym = $request->user()->gym;
         $member->delete();
+
+        if ($gym) {
+            $this->finances->flush($gym);
+        }
 
         return response()->noContent();
     }
