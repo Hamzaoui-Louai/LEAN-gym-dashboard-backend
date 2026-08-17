@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['user_id', 'name', 'phone', 'email', 'address', 'logo', 'opening_time', 'closing_time', 'status'])]
+#[Fillable(['user_id', 'name', 'description', 'phone', 'email', 'address', 'logo', 'opening_time', 'closing_time', 'days_open', 'status'])]
 class Gym extends Model
 {
     use HasFactory;
@@ -18,6 +18,7 @@ class Gym extends Model
     {
         return [
             'status' => GymStatus::class,
+            'days_open' => 'array',
         ];
     }
 

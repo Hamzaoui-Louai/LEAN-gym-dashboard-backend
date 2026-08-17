@@ -8,6 +8,8 @@ use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
 
 class AuthController extends Controller
 {
@@ -50,6 +52,52 @@ class AuthController extends Controller
     public function me(Request $request): JsonResponse
     {
         return response()->json(Auth::guard('api')->user());
+    }
+
+    public function update(Request $request): JsonResponse
+    {
+        $user = Auth::guard('api')->user();
+
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'email', 'max:255', Rule::unique('users')->ignore($user->id)],
+        ]);
+
+        $user->update($data);
+
+        return response()->json($user->fresh());
+    }
+
+    public function updatePassword(Request $request): JsonResponse
+    {
+        $user = Auth::guard('api')->user();
+
+        $data = $request->validate([
+            'current_password' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        if (! Hash::check($data['current_password'], $user->password)) {
+            return response()->json([
+                'message' => 'Validation failed.',
+                'errors' => ['current_password' => ['The provided password is incorrect.']],
+            ], 422);
+        }
+
+        $user->update(['password' => $data['password']]);
+
+        return response()->json(['message' => 'Password updated.']);
+    }
+
+    public function destroy(Request $request): JsonResponse
+    {
+        $user = Auth::guard('api')->user();
+
+        Auth::guard('api')->invalidate();
+
+        $user->delete();
+
+        return response()->json(null, 204);
     }
 
     public function resendVerificationEmail(Request $request): JsonResponse

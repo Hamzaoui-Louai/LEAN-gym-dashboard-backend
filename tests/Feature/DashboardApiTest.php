@@ -81,11 +81,12 @@ class DashboardApiTest extends TestCase
 
     public function test_dashboard_endpoints_require_authentication(): void
     {
-        foreach (['/api/members', '/api/staff', '/api/equipment', '/api/equipment/repairs', '/api/checkins', '/api/finances/overview', '/api/dashboard/overview', '/api/dashboard/insights', '/api/dashboard/operations', '/api/dashboard/finances'] as $endpoint) {
+        foreach (['/api/members', '/api/staff', '/api/equipment', '/api/equipment/repairs', '/api/checkins', '/api/finances/overview', '/api/gym', '/api/dashboard/overview', '/api/dashboard/insights', '/api/dashboard/operations', '/api/dashboard/finances'] as $endpoint) {
             $this->getJson($endpoint)->assertUnauthorized();
         }
 
         $this->postJson('/api/checkins', ['member_id' => 1])->assertUnauthorized();
+        $this->putJson('/api/gym', ['name' => 'Renamed'])->assertUnauthorized();
 
         $memberPayload = [
             'name' => 'Alice Wonder',
@@ -98,6 +99,30 @@ class DashboardApiTest extends TestCase
         $this->postJson('/api/members', $memberPayload)->assertUnauthorized();
         $this->putJson('/api/members/1', $memberPayload)->assertUnauthorized();
         $this->deleteJson('/api/members/1')->assertUnauthorized();
+
+        $staffPayload = [
+            'name' => 'Jane Doe',
+            'email' => 'jane@example.com',
+            'role' => 'Coach',
+            'status' => 'active',
+            'salary' => 2500,
+            'joined_at' => '2026-08-01',
+        ];
+
+        $this->postJson('/api/staff', $staffPayload)->assertUnauthorized();
+        $this->putJson('/api/staff/1', $staffPayload)->assertUnauthorized();
+        $this->postJson('/api/staff/1/payslips', ['date' => '2026-08-01', 'amount' => 2500, 'status' => 'paid'])->assertUnauthorized();
+
+        $equipmentPayload = [
+            'name' => 'Treadmill X1',
+            'category' => 'Cardio',
+            'state' => 'operational',
+            'purchased_at' => '2026-08-01',
+            'price' => 1200,
+        ];
+
+        $this->postJson('/api/equipment', $equipmentPayload)->assertUnauthorized();
+        $this->putJson('/api/equipment/1', $equipmentPayload)->assertUnauthorized();
     }
 
     public function test_members_index_returns_shaped_members_for_the_owners_gym_only(): void
@@ -304,6 +329,180 @@ class DashboardApiTest extends TestCase
             ->assertJsonPath('data.0.payslips.0.status', 'paid');
     }
 
+    public function test_staff_store_creates_staff_member(): void
+    {
+        [, , $token] = $this->createOwner();
+
+        $response = $this->postJson('/api/staff', [
+            'name' => 'Jane Doe',
+            'email' => 'jane@example.com',
+            'phone' => '+15559876543',
+            'role' => 'Manager',
+            'status' => 'active',
+            'salary' => 2800,
+            'joined_at' => '2026-08-01',
+        ], $this->authHeader($token));
+
+        $response->assertCreated()
+            ->assertJsonPath('data.name', 'Jane Doe')
+            ->assertJsonPath('data.email', 'jane@example.com')
+            ->assertJsonPath('data.role', 'Manager')
+            ->assertJsonPath('data.status', 'active')
+            ->assertJsonPath('data.salary', 2800)
+            ->assertJsonPath('data.joined_at', '2026-08-01')
+            ->assertJsonPath('data.payslips', []);
+
+        $this->assertDatabaseHas('staff', [
+            'id' => $response->json('data.id'),
+            'first_name' => 'Jane',
+            'last_name' => 'Doe',
+            'position' => 'Manager',
+        ]);
+    }
+
+    public function test_staff_store_rejects_invalid_status(): void
+    {
+        [, , $token] = $this->createOwner();
+
+        $this->postJson('/api/staff', [
+            'name' => 'Bad Staff',
+            'email' => 'bad@example.com',
+            'role' => 'Coach',
+            'status' => 'fired',
+            'salary' => 2500,
+            'joined_at' => '2026-08-01',
+        ], $this->authHeader($token))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['status']);
+    }
+
+    public function test_staff_update_edits_staff_member(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $staff = Staff::create([
+            'gym_id' => $gym->id,
+            'first_name' => 'Jane',
+            'last_name' => 'Doe',
+            'position' => 'Coach',
+            'salary' => 2500,
+            'hire_date' => now()->subMonths(6),
+        ]);
+
+        $this->putJson("/api/staff/{$staff->id}", [
+            'name' => 'Jane Smith',
+            'email' => 'jane.smith@example.com',
+            'role' => 'Manager',
+            'status' => 'on_leave',
+            'salary' => 2900,
+            'joined_at' => '2026-07-01',
+        ], $this->authHeader($token))
+            ->assertOk()
+            ->assertJsonPath('data.name', 'Jane Smith')
+            ->assertJsonPath('data.email', 'jane.smith@example.com')
+            ->assertJsonPath('data.role', 'Manager')
+            ->assertJsonPath('data.status', 'on_leave')
+            ->assertJsonPath('data.salary', 2900);
+
+        $this->assertDatabaseHas('staff', [
+            'id' => $staff->id,
+            'first_name' => 'Jane',
+            'last_name' => 'Smith',
+            'position' => 'Manager',
+            'status' => 'on_leave',
+        ]);
+    }
+
+    public function test_staff_update_rejects_foreign_staff(): void
+    {
+        [, , $token] = $this->createOwner();
+
+        $otherUser = User::create([
+            'name' => 'Other Owner',
+            'email' => 'other@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+        $otherGym = Gym::create(['user_id' => $otherUser->id, 'name' => 'Other Gym']);
+        $foreignStaff = Staff::create([
+            'gym_id' => $otherGym->id,
+            'first_name' => 'Stranger',
+            'last_name' => 'Danger',
+            'position' => 'Coach',
+            'salary' => 1000,
+        ]);
+
+        $this->putJson("/api/staff/{$foreignStaff->id}", [
+            'name' => 'Hijack',
+            'email' => 'hijack@example.com',
+            'role' => 'Manager',
+            'status' => 'active',
+            'salary' => 2900,
+            'joined_at' => '2026-08-01',
+        ], $this->authHeader($token))
+            ->assertNotFound()
+            ->assertJsonPath('message', 'Staff member not found.');
+    }
+
+    public function test_staff_payslip_store_creates_payslip(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $staff = Staff::create([
+            'gym_id' => $gym->id,
+            'first_name' => 'Jane',
+            'last_name' => 'Doe',
+            'position' => 'Coach',
+            'salary' => 2500,
+        ]);
+
+        $this->postJson("/api/staff/{$staff->id}/payslips", [
+            'date' => '2026-07-01',
+            'amount' => 2500,
+            'method' => 'Transfer',
+            'status' => 'pending',
+        ], $this->authHeader($token))
+            ->assertCreated()
+            ->assertJsonPath('data.period', 'July 2026')
+            ->assertJsonPath('data.amount', 2500)
+            ->assertJsonPath('data.method', 'Transfer')
+            ->assertJsonPath('data.status', 'pending');
+
+        $this->assertDatabaseHas('payslips', [
+            'staff_id' => $staff->id,
+            'month' => 7,
+            'year' => 2026,
+            'amount' => 2500,
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_staff_payslip_store_rejects_foreign_staff(): void
+    {
+        [, , $token] = $this->createOwner();
+
+        $otherUser = User::create([
+            'name' => 'Other Owner',
+            'email' => 'other@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+        $otherGym = Gym::create(['user_id' => $otherUser->id, 'name' => 'Other Gym']);
+        $foreignStaff = Staff::create([
+            'gym_id' => $otherGym->id,
+            'first_name' => 'Stranger',
+            'last_name' => 'Danger',
+            'position' => 'Coach',
+            'salary' => 1000,
+        ]);
+
+        $this->postJson("/api/staff/{$foreignStaff->id}/payslips", [
+            'date' => '2026-07-01',
+            'amount' => 1000,
+            'status' => 'paid',
+        ], $this->authHeader($token))
+            ->assertNotFound()
+            ->assertJsonPath('message', 'Staff member not found.');
+    }
+
     public function test_equipment_index_maps_status_to_state_and_price(): void
     {
         [, $gym, $token] = $this->createOwner();
@@ -344,6 +543,142 @@ class DashboardApiTest extends TestCase
             ->assertJsonPath('data.0.price', 1200)
             ->assertJsonPath('data.1.state', 'under_repair')
             ->assertJsonPath('data.2.state', 'out_of_order');
+    }
+
+    public function test_equipment_store_creates_equipment_and_purchase_bill(): void
+    {
+        [, , $token] = $this->createOwner();
+
+        $response = $this->postJson('/api/equipment', [
+            'name' => 'Treadmill X2',
+            'category' => 'Cardio',
+            'state' => 'operational',
+            'purchased_at' => '2026-08-01',
+            'price' => 1200,
+        ], $this->authHeader($token));
+
+        $response->assertCreated()
+            ->assertJsonPath('data.name', 'Treadmill X2')
+            ->assertJsonPath('data.category', 'Cardio')
+            ->assertJsonPath('data.state', 'operational')
+            ->assertJsonPath('data.purchased_at', '2026-08-01')
+            ->assertJsonPath('data.price', 1200);
+
+        $equipmentId = $response->json('data.id');
+
+        $this->assertDatabaseHas('equipment', [
+            'id' => $equipmentId,
+            'name' => 'Treadmill X2',
+            'status' => 'available',
+        ]);
+        $this->assertDatabaseHas('purchase_bills', [
+            'equipment_id' => $equipmentId,
+            'amount' => 1200,
+        ]);
+    }
+
+    public function test_equipment_store_maps_state_to_status(): void
+    {
+        [, , $token] = $this->createOwner();
+
+        $response = $this->postJson('/api/equipment', [
+            'name' => 'Cable Crossover',
+            'category' => 'Strength',
+            'state' => 'under_repair',
+            'purchased_at' => '2026-08-01',
+            'price' => 1450,
+        ], $this->authHeader($token));
+
+        $response->assertCreated()->assertJsonPath('data.state', 'under_repair');
+        $this->assertDatabaseHas('equipment', [
+            'id' => $response->json('data.id'),
+            'status' => 'maintenance',
+        ]);
+    }
+
+    public function test_equipment_store_rejects_invalid_state(): void
+    {
+        [, , $token] = $this->createOwner();
+
+        $this->postJson('/api/equipment', [
+            'name' => 'Bad Machine',
+            'category' => 'Strength',
+            'state' => 'on_fire',
+            'purchased_at' => '2026-08-01',
+            'price' => 100,
+        ], $this->authHeader($token))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['state']);
+    }
+
+    public function test_equipment_update_edits_equipment_and_purchase_bill(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $equipment = Equipment::create([
+            'gym_id' => $gym->id,
+            'name' => 'Treadmill X1',
+            'category' => 'Cardio',
+            'purchase_date' => now()->subYear(),
+            'status' => EquipmentStatus::Available,
+        ]);
+
+        PurchaseBill::create([
+            'equipment_id' => $equipment->id,
+            'amount' => 1200.00,
+            'purchase_date' => now()->subYear(),
+        ]);
+
+        $this->putJson("/api/equipment/{$equipment->id}", [
+            'name' => 'Treadmill X1 Pro',
+            'category' => 'Cardio',
+            'state' => 'out_of_order',
+            'purchased_at' => '2026-08-01',
+            'price' => 1300,
+        ], $this->authHeader($token))
+            ->assertOk()
+            ->assertJsonPath('data.name', 'Treadmill X1 Pro')
+            ->assertJsonPath('data.state', 'out_of_order')
+            ->assertJsonPath('data.purchased_at', '2026-08-01')
+            ->assertJsonPath('data.price', 1300);
+
+        $this->assertDatabaseHas('equipment', [
+            'id' => $equipment->id,
+            'name' => 'Treadmill X1 Pro',
+            'status' => 'broken',
+        ]);
+        $this->assertDatabaseHas('purchase_bills', [
+            'equipment_id' => $equipment->id,
+            'amount' => 1300,
+        ]);
+    }
+
+    public function test_equipment_update_rejects_foreign_equipment(): void
+    {
+        [, , $token] = $this->createOwner();
+
+        $otherUser = User::create([
+            'name' => 'Other Owner',
+            'email' => 'other@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+        $otherGym = Gym::create(['user_id' => $otherUser->id, 'name' => 'Other Gym']);
+        $foreignEquipment = Equipment::create([
+            'gym_id' => $otherGym->id,
+            'name' => 'Rower',
+            'category' => 'Cardio',
+            'status' => EquipmentStatus::Available,
+        ]);
+
+        $this->putJson("/api/equipment/{$foreignEquipment->id}", [
+            'name' => 'Hijacked',
+            'category' => 'Cardio',
+            'state' => 'operational',
+            'purchased_at' => '2026-08-01',
+            'price' => 100,
+        ], $this->authHeader($token))
+            ->assertNotFound()
+            ->assertJsonPath('message', 'Equipment not found.');
     }
 
     public function test_equipment_repairs_returns_paid_repairs_for_the_owners_equipment(): void
@@ -748,5 +1083,88 @@ class DashboardApiTest extends TestCase
 
         $last = $response->json('revExpData')[5];
         $this->assertSame(49.99, $last['revenue']);
+    }
+
+    public function test_gym_show_returns_shaped_gym_for_the_owners_account(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $response = $this->getJson('/api/gym', $this->authHeader($token));
+
+        $response->assertOk()
+            ->assertJsonPath('data.id', $gym->id)
+            ->assertJsonPath('data.name', 'LEAN Downtown')
+            ->assertJsonPath('data.opens_at', '06:00')
+            ->assertJsonPath('data.closes_at', '22:00')
+            ->assertJsonPath('data.days_open', [])
+            ->assertJsonPath('data.status', 'active')
+            ->assertJsonPath('data.registered_at', $gym->created_at->toDateString());
+    }
+
+    public function test_gym_show_returns_description_and_days_open_when_set(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $gym->update([
+            'description' => 'A 24/7 strength and cardio gym.',
+            'days_open' => ['mon', 'wed', 'fri'],
+        ]);
+
+        $this->getJson('/api/gym', $this->authHeader($token))
+            ->assertOk()
+            ->assertJsonPath('data.description', 'A 24/7 strength and cardio gym.')
+            ->assertJsonPath('data.days_open', ['mon', 'wed', 'fri']);
+    }
+
+    public function test_gym_update_updates_the_owners_gym(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $payload = [
+            'name' => 'LEAN Uptown',
+            'description' => 'Rebranded facility.',
+            'address' => '99 High Street',
+            'email' => 'uptown@lean.example',
+            'phone' => '+1 (555) 010-9999',
+            'opens_at' => '07:30',
+            'closes_at' => '21:45',
+            'days_open' => ['tue', 'thu'],
+            'status' => 'inactive',
+        ];
+
+        $response = $this->putJson('/api/gym', $payload, $this->authHeader($token));
+
+        $response->assertOk()
+            ->assertJsonPath('data.id', $gym->id)
+            ->assertJsonPath('data.name', 'LEAN Uptown')
+            ->assertJsonPath('data.description', 'Rebranded facility.')
+            ->assertJsonPath('data.address', '99 High Street')
+            ->assertJsonPath('data.email', 'uptown@lean.example')
+            ->assertJsonPath('data.phone', '+1 (555) 010-9999')
+            ->assertJsonPath('data.opens_at', '07:30')
+            ->assertJsonPath('data.closes_at', '21:45')
+            ->assertJsonPath('data.days_open', ['tue', 'thu'])
+            ->assertJsonPath('data.status', 'inactive');
+
+        $this->assertSame('07:30', $gym->fresh()->opening_time);
+        $this->assertSame('21:45', $gym->fresh()->closing_time);
+        $this->assertSame(['tue', 'thu'], $gym->fresh()->days_open);
+        $this->assertSame('inactive', $gym->fresh()->status->value);
+    }
+
+    public function test_gym_update_rejects_invalid_days_and_status(): void
+    {
+        [, , $token] = $this->createOwner();
+
+        $this->putJson('/api/gym', [
+            'name' => 'LEAN Downtown',
+            'status' => 'nope',
+        ], $this->authHeader($token))->assertUnprocessable();
+
+        $this->putJson('/api/gym', [
+            'name' => 'LEAN Downtown',
+            'status' => 'active',
+            'days_open' => ['someday'],
+        ], $this->authHeader($token))->assertUnprocessable();
     }
 }

@@ -227,4 +227,167 @@ class AuthTest extends TestCase
 
         Notification::assertNothingSent();
     }
+
+    public function test_update_user_changes_name_and_email(): void
+    {
+        User::create([
+            'name' => 'Lean Admin',
+            'email' => 'admin@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $token = $this->postJson('/api/login', [
+            'email' => 'admin@example.com',
+            'password' => 'password123',
+        ])->json('access_token');
+
+        $response = $this->putJson('/api/user', [
+            'name' => 'Updated Name',
+            'email' => 'updated@example.com',
+        ], $this->authHeader($token));
+
+        $response->assertOk()
+            ->assertJsonPath('name', 'Updated Name')
+            ->assertJsonPath('email', 'updated@example.com');
+
+        $this->assertDatabaseHas('users', [
+            'email' => 'updated@example.com',
+            'name' => 'Updated Name',
+        ]);
+    }
+
+    public function test_update_user_rejects_duplicate_email(): void
+    {
+        User::create([
+            'name' => 'Lean Admin',
+            'email' => 'admin@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+        User::create([
+            'name' => 'Other User',
+            'email' => 'taken@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $token = $this->postJson('/api/login', [
+            'email' => 'admin@example.com',
+            'password' => 'password123',
+        ])->json('access_token');
+
+        $this->putJson('/api/user', [
+            'name' => 'Lean Admin',
+            'email' => 'taken@example.com',
+        ], $this->authHeader($token))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['email']);
+    }
+
+    public function test_update_user_requires_name_and_email(): void
+    {
+        User::create([
+            'name' => 'Lean Admin',
+            'email' => 'admin@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $token = $this->postJson('/api/login', [
+            'email' => 'admin@example.com',
+            'password' => 'password123',
+        ])->json('access_token');
+
+        $this->putJson('/api/user', [], $this->authHeader($token))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['name', 'email']);
+    }
+
+    public function test_change_password_updates_password_and_rejects_wrong_current(): void
+    {
+        User::create([
+            'name' => 'Lean Admin',
+            'email' => 'admin@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $token = $this->postJson('/api/login', [
+            'email' => 'admin@example.com',
+            'password' => 'password123',
+        ])->json('access_token');
+
+        // Wrong current password
+        $this->putJson('/api/user/password', [
+            'current_password' => 'wrong-password',
+            'password' => 'newpassword123',
+            'password_confirmation' => 'newpassword123',
+        ], $this->authHeader($token))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['current_password']);
+
+        // Correct current password
+        $this->putJson('/api/user/password', [
+            'current_password' => 'password123',
+            'password' => 'newpassword123',
+            'password_confirmation' => 'newpassword123',
+        ], $this->authHeader($token))
+            ->assertOk();
+
+        // Old password no longer works
+        $this->postJson('/api/login', [
+            'email' => 'admin@example.com',
+            'password' => 'password123',
+        ])->assertUnauthorized();
+
+        // New password works
+        $this->postJson('/api/login', [
+            'email' => 'admin@example.com',
+            'password' => 'newpassword123',
+        ])->assertOk();
+    }
+
+    public function test_change_password_requires_confirmation_and_min_length(): void
+    {
+        User::create([
+            'name' => 'Lean Admin',
+            'email' => 'admin@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $token = $this->postJson('/api/login', [
+            'email' => 'admin@example.com',
+            'password' => 'password123',
+        ])->json('access_token');
+
+        $this->putJson('/api/user/password', [
+            'current_password' => 'password123',
+            'password' => 'short',
+            'password_confirmation' => 'different',
+        ], $this->authHeader($token))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['password']);
+    }
+
+    public function test_delete_account_removes_user(): void
+    {
+        User::create([
+            'name' => 'Lean Admin',
+            'email' => 'admin@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $token = $this->postJson('/api/login', [
+            'email' => 'admin@example.com',
+            'password' => 'password123',
+        ])->json('access_token');
+
+        $this->deleteJson('/api/user', [], $this->authHeader($token))
+            ->assertNoContent();
+
+        $this->assertDatabaseMissing('users', ['email' => 'admin@example.com']);
+    }
+
+    public function test_user_endpoints_require_authentication(): void
+    {
+        $this->putJson('/api/user', ['name' => 'X', 'email' => 'x@x.com'])->assertUnauthorized();
+        $this->putJson('/api/user/password', ['current_password' => 'x', 'password' => 'x', 'password_confirmation' => 'x'])->assertUnauthorized();
+        $this->deleteJson('/api/user')->assertUnauthorized();
+    }
 }

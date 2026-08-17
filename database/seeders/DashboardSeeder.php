@@ -134,15 +134,17 @@ class DashboardSeeder extends Seeder
             ['plan' => SubscriptionPlan::Basic, 'valid_until' => now()->addYear()],
         );
 
-        $gym = $user->gym()->firstOrCreate([
+        $gym = $user->gym()->updateOrCreate([
             'user_id' => $user->id,
         ], [
             'name' => 'Lean Fitness Club',
+            'description' => 'A modern training facility with a full strength floor, cardio zone and functional area — plus personal coaching for every member.',
             'phone' => '+1 (555) 010-2000',
             'email' => 'hello@leanfitness.example',
             'address' => '48 Fitness Avenue, Springfield',
             'opening_time' => '06:00',
             'closing_time' => '23:00',
+            'days_open' => ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'],
             'status' => GymStatus::Active,
         ]);
 
