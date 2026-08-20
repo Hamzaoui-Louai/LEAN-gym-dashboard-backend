@@ -57,19 +57,19 @@ class DashboardSeeder extends Seeder
 
     private const EQUIPMENT = [
         ['Squat Rack', 'Strength', 1850, 'operational', '2024-01-15'],
-        ['Olympic Barbell Set', 'Strength', 620, 'in_use', '2024-02-08'],
+        ['Olympic Barbell Set', 'Strength', 620, 'operational', '2024-02-08'],
         ['Bench Press', 'Strength', 480, 'operational', '2024-03-21'],
         ['Dumbbell Rack', 'Strength', 350, 'operational', '2024-04-02'],
         ['Cable Crossover', 'Strength', 1450, 'out_of_order', '2024-05-17'],
         ['Leg Press', 'Strength', 2100, 'operational', '2024-06-09'],
-        ['Lat Pulldown', 'Strength', 890, 'in_use', '2024-07-01'],
+        ['Lat Pulldown', 'Strength', 890, 'operational', '2024-07-01'],
         ['Power Rack', 'Strength', 2400, 'operational', '2024-08-14'],
         ['Treadmill', 'Cardio', 1250, 'operational', '2024-09-05'],
-        ['Elliptical', 'Cardio', 1100, 'in_use', '2024-10-19'],
+        ['Elliptical', 'Cardio', 1100, 'operational', '2024-10-19'],
         ['Stationary Bike', 'Cardio', 520, 'operational', '2024-11-11'],
-        ['Rowing Machine', 'Cardio', 940, 'in_use', '2024-12-01'],
+        ['Rowing Machine', 'Cardio', 940, 'operational', '2024-12-01'],
         ['Stair Climber', 'Cardio', 1780, 'under_repair', '2025-01-22'],
-        ['Spin Bike', 'Cardio', 480, 'in_use', '2025-02-14'],
+        ['Spin Bike', 'Cardio', 480, 'operational', '2025-02-14'],
         ['Yoga Mats (Set of 20)', 'Flexibility', 210, 'operational', '2025-03-03'],
         ['Stability Balls (Set of 10)', 'Flexibility', 260, 'operational', '2025-03-30'],
         ['Kettlebell Set', 'Functional', 540, 'operational', '2025-04-18'],
@@ -473,7 +473,7 @@ class DashboardSeeder extends Seeder
         }
 
         for ($i = 0; $i < self::FILLER_EQUIPMENT; $i += 1) {
-            $state = fake()->randomElement(['operational', 'in_use', 'under_repair', 'out_of_order']);
+            $state = fake()->randomElement(['operational', 'under_repair', 'out_of_order']);
             $purchasedAt = fake()->dateTimeBetween('-2 years', 'now')->format('Y-m-d');
             $price = fake()->randomFloat(2, 120, 3000);
             $equipmentId += 1;

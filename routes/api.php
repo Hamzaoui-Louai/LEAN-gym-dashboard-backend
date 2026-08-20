@@ -34,8 +34,12 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/staff/{id}/payslips', [StaffController::class, 'storePayslip']);
     Route::get('/equipment', [EquipmentController::class, 'index']);
     Route::post('/equipment', [EquipmentController::class, 'store']);
-    Route::put('/equipment/{id}', [EquipmentController::class, 'update']);
+    Route::get('/equipment/purchases', [EquipmentController::class, 'purchases']);
     Route::get('/equipment/repairs', [EquipmentController::class, 'repairs']);
+    Route::put('/equipment/{id}', [EquipmentController::class, 'update']);
+    Route::post('/equipment/{id}/repair', [EquipmentController::class, 'markUnderRepair']);
+    Route::post('/equipment/{id}/repaired', [EquipmentController::class, 'markRepaired']);
+    Route::post('/equipment/{id}/out-of-order', [EquipmentController::class, 'markOutOfOrder']);
     Route::get('/checkins', [CheckinController::class, 'index']);
     Route::post('/checkins', [CheckinController::class, 'store']);
     Route::post('/checkins/{id}/check-out', [CheckinController::class, 'checkOut']);

@@ -293,7 +293,7 @@ class SchemaRelationshipsTest extends TestCase
             fn () => DB::table('equipment')->insert([
                 'gym_id' => $gym->id,
                 'name' => 'Smith Machine',
-                'status' => 'in_use',
+                'status' => 'invalid_state',
             ]),
             QueryException::class,
         );

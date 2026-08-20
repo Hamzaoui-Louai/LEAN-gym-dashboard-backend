@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Enums\EquipmentStatus;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\EquipmentResource;
+use App\Http\Resources\PurchaseBillResource;
 use App\Http\Resources\RepairResource;
 use App\Models\Equipment;
 use App\Models\RepairBill;
@@ -16,7 +17,7 @@ use Illuminate\Validation\Rule;
 
 class EquipmentController extends Controller
 {
-    private const STATES = ['operational', 'in_use', 'under_repair', 'out_of_order'];
+    private const STATES = ['operational', 'under_repair', 'out_of_order'];
 
     public function __construct(private readonly FinanceOverviewService $finances) {}
 
@@ -83,6 +84,26 @@ class EquipmentController extends Controller
         return EquipmentResource::make($equipment->load(['purchaseBills', 'repairBills']))->response();
     }
 
+    public function purchases(Request $request): AnonymousResourceCollection
+    {
+        $gym = $request->user()->gym;
+
+        $purchases = $gym
+            ? $gym->equipment()
+                ->with('purchaseBills')
+                ->get()
+                ->flatMap(fn (Equipment $equipment) => $equipment->purchaseBills->map(function ($bill) use ($equipment) {
+                    $bill->setRelation('equipment', $equipment);
+
+                    return $bill;
+                }))
+                ->sortByDesc('purchase_date')
+                ->values()
+            : collect();
+
+        return PurchaseBillResource::collection($purchases);
+    }
+
     public function repairs(Request $request): AnonymousResourceCollection
     {
         $gym = $request->user()->gym;
@@ -96,6 +117,78 @@ class EquipmentController extends Controller
             : collect();
 
         return RepairResource::collection($repairs);
+    }
+
+    public function markUnderRepair(Request $request, int $id): JsonResponse
+    {
+        $equipment = $this->equipmentFor($request, $id);
+
+        if (! $equipment) {
+            return response()->json(['message' => 'Equipment not found.'], 404);
+        }
+
+        if ($equipment->status !== EquipmentStatus::Broken) {
+            return response()->json(['message' => 'Only out-of-order equipment can be marked for repair.'], 422);
+        }
+
+        $data = $request->validate([
+            'cost' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $equipment->update(['status' => EquipmentStatus::Maintenance]);
+
+        $equipment->repairBills()->create([
+            'amount' => $data['cost'] ?? 0,
+            'repair_date' => now(),
+        ]);
+
+        if ($gym = $request->user()->gym) {
+            $this->finances->flush($gym);
+        }
+
+        return EquipmentResource::make($equipment->load(['purchaseBills', 'repairBills']))->response();
+    }
+
+    public function markRepaired(Request $request, int $id): JsonResponse
+    {
+        $equipment = $this->equipmentFor($request, $id);
+
+        if (! $equipment) {
+            return response()->json(['message' => 'Equipment not found.'], 404);
+        }
+
+        if ($equipment->status !== EquipmentStatus::Maintenance) {
+            return response()->json(['message' => 'Only equipment under repair can be marked as repaired.'], 422);
+        }
+
+        $equipment->update(['status' => EquipmentStatus::Available]);
+
+        if ($gym = $request->user()->gym) {
+            $this->finances->flush($gym);
+        }
+
+        return EquipmentResource::make($equipment->load(['purchaseBills', 'repairBills']))->response();
+    }
+
+    public function markOutOfOrder(Request $request, int $id): JsonResponse
+    {
+        $equipment = $this->equipmentFor($request, $id);
+
+        if (! $equipment) {
+            return response()->json(['message' => 'Equipment not found.'], 404);
+        }
+
+        if ($equipment->status !== EquipmentStatus::Available) {
+            return response()->json(['message' => 'Only operational equipment can be marked as out of order.'], 422);
+        }
+
+        $equipment->update(['status' => EquipmentStatus::Broken]);
+
+        if ($gym = $request->user()->gym) {
+            $this->finances->flush($gym);
+        }
+
+        return EquipmentResource::make($equipment->load(['purchaseBills', 'repairBills']))->response();
     }
 
     private function equipmentFor(Request $request, int $id): ?Equipment
@@ -119,6 +212,7 @@ class EquipmentController extends Controller
         return match ($state) {
             'under_repair' => EquipmentStatus::Maintenance,
             'out_of_order' => EquipmentStatus::Broken,
+            'operational' => EquipmentStatus::Available,
             default => EquipmentStatus::Available,
         };
     }

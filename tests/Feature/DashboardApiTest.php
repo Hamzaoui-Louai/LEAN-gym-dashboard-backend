@@ -822,6 +822,149 @@ class DashboardApiTest extends TestCase
             ->assertJsonPath('data.0.status', 'paid');
     }
 
+    public function test_equipment_purchases_returns_purchases_for_owners_equipment(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $equipment = Equipment::create([
+            'gym_id' => $gym->id,
+            'name' => 'Treadmill X1',
+            'status' => EquipmentStatus::Available,
+        ]);
+
+        PurchaseBill::create([
+            'equipment_id' => $equipment->id,
+            'amount' => 1200.00,
+            'purchase_date' => now()->subMonth(),
+        ]);
+
+        $otherUser = User::create([
+            'name' => 'Other Owner',
+            'email' => 'other@example.com',
+            'password' => bcrypt('password123'),
+        ]);
+        $otherGym = Gym::create(['user_id' => $otherUser->id, 'name' => 'Other Gym']);
+        $otherEquipment = Equipment::create([
+            'gym_id' => $otherGym->id,
+            'name' => 'Rower',
+            'status' => EquipmentStatus::Available,
+        ]);
+        PurchaseBill::create([
+            'equipment_id' => $otherEquipment->id,
+            'amount' => 999.00,
+            'purchase_date' => now()->subMonth(),
+        ]);
+
+        $this->getJson('/api/equipment/purchases', $this->authHeader($token))
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.equipment', 'Treadmill X1')
+            ->assertJsonPath('data.0.amount', 1200)
+            ->assertJsonPath('data.0.status', 'paid');
+    }
+
+    public function test_equipment_repair_transitions_broken_to_maintenance(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $equipment = Equipment::create([
+            'gym_id' => $gym->id,
+            'name' => 'Cable Crossover',
+            'status' => EquipmentStatus::Broken,
+        ]);
+
+        $this->postJson("/api/equipment/{$equipment->id}/repair", [
+            'cost' => 240,
+        ], $this->authHeader($token))
+            ->assertOk()
+            ->assertJsonPath('data.state', 'under_repair');
+
+        $this->assertDatabaseHas('equipment', ['id' => $equipment->id, 'status' => 'maintenance']);
+        $this->assertDatabaseHas('repair_bills', [
+            'equipment_id' => $equipment->id,
+            'amount' => 240,
+        ]);
+    }
+
+    public function test_equipment_repair_rejects_non_broken(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $equipment = Equipment::create([
+            'gym_id' => $gym->id,
+            'name' => 'Treadmill',
+            'status' => EquipmentStatus::Available,
+        ]);
+
+        $this->postJson("/api/equipment/{$equipment->id}/repair", [], $this->authHeader($token))
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Only out-of-order equipment can be marked for repair.');
+    }
+
+    public function test_equipment_repaired_transitions_maintenance_to_available(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $equipment = Equipment::create([
+            'gym_id' => $gym->id,
+            'name' => 'Smith Machine',
+            'status' => EquipmentStatus::Maintenance,
+        ]);
+
+        $this->postJson("/api/equipment/{$equipment->id}/repaired", [], $this->authHeader($token))
+            ->assertOk()
+            ->assertJsonPath('data.state', 'operational');
+
+        $this->assertDatabaseHas('equipment', ['id' => $equipment->id, 'status' => 'available']);
+    }
+
+    public function test_equipment_repaired_rejects_non_maintenance(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $equipment = Equipment::create([
+            'gym_id' => $gym->id,
+            'name' => 'Treadmill',
+            'status' => EquipmentStatus::Available,
+        ]);
+
+        $this->postJson("/api/equipment/{$equipment->id}/repaired", [], $this->authHeader($token))
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Only equipment under repair can be marked as repaired.');
+    }
+
+    public function test_equipment_out_of_order_transitions_available_to_broken(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $equipment = Equipment::create([
+            'gym_id' => $gym->id,
+            'name' => 'Leg Press',
+            'status' => EquipmentStatus::Available,
+        ]);
+
+        $this->postJson("/api/equipment/{$equipment->id}/out-of-order", [], $this->authHeader($token))
+            ->assertOk()
+            ->assertJsonPath('data.state', 'out_of_order');
+
+        $this->assertDatabaseHas('equipment', ['id' => $equipment->id, 'status' => 'broken']);
+    }
+
+    public function test_equipment_out_of_order_rejects_non_available(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $equipment = Equipment::create([
+            'gym_id' => $gym->id,
+            'name' => 'Treadmill',
+            'status' => EquipmentStatus::Broken,
+        ]);
+
+        $this->postJson("/api/equipment/{$equipment->id}/out-of-order", [], $this->authHeader($token))
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Only operational equipment can be marked as out of order.');
+    }
+
     public function test_checkins_index_returns_shaped_checkins(): void
     {
         [, $gym, $token] = $this->createOwner();
