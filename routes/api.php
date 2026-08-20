@@ -8,10 +8,17 @@ use App\Http\Controllers\Api\FinanceController;
 use App\Http\Controllers\Api\GymController;
 use App\Http\Controllers\Api\MemberController;
 use App\Http\Controllers\Api\StaffController;
+use App\Http\Controllers\Auth\SocialiteController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:register');
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
+
+Route::get('/auth/google/redirect', [SocialiteController::class, 'redirect'])
+    ->name('socialite.google.redirect');
+
+Route::get('/auth/google/callback', [SocialiteController::class, 'callback'])
+    ->name('socialite.google.callback');
 
 Route::middleware('auth:api')->group(function () {
     Route::get('/user', [AuthController::class, 'me']);
