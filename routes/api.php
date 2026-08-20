@@ -25,6 +25,9 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/members', [MemberController::class, 'store']);
     Route::put('/members/{id}', [MemberController::class, 'update']);
     Route::delete('/members/{id}', [MemberController::class, 'destroy']);
+    Route::post('/members/{id}/subscribe', [MemberController::class, 'subscribe']);
+    Route::post('/members/{id}/freeze', [MemberController::class, 'freeze']);
+    Route::post('/members/{id}/unfreeze', [MemberController::class, 'unfreeze']);
     Route::get('/staff', [StaffController::class, 'index']);
     Route::post('/staff', [StaffController::class, 'store']);
     Route::put('/staff/{id}', [StaffController::class, 'update']);

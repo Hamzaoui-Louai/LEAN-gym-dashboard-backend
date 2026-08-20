@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['member_id', 'plan_name', 'price', 'starts_at', 'ends_at'])]
+#[Fillable(['member_id', 'plan_name', 'price', 'starts_at', 'ends_at', 'last_freezed_at', 'last_unfreezed_at', 'original_ends_at'])]
 class MemberSubscription extends Model
 {
     use HasFactory;
@@ -19,6 +19,9 @@ class MemberSubscription extends Model
             'price' => 'decimal:2',
             'starts_at' => 'datetime',
             'ends_at' => 'datetime',
+            'last_freezed_at' => 'datetime',
+            'last_unfreezed_at' => 'datetime',
+            'original_ends_at' => 'datetime',
         ];
     }
 

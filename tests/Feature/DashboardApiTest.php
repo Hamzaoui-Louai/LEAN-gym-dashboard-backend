@@ -15,6 +15,7 @@ use App\Models\RepairBill;
 use App\Models\Staff;
 use App\Models\User;
 use App\Models\UserSubscription;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -167,24 +168,22 @@ class DashboardApiTest extends TestCase
             'name' => 'Alice Wonder',
             'email' => 'alice@example.com',
             'phone' => '+15550001111',
-            'status' => 'active',
-            'joined_at' => '2026-08-01',
             'membership' => [
                 'plan' => 'Monthly',
                 'price' => 45,
-                'started_at' => '2026-08-01',
-                'ends_at' => '2026-08-31',
             ],
         ], $this->authHeader($token));
+
+        $today = now()->toDateString();
 
         $response->assertCreated()
             ->assertJsonPath('data.name', 'Alice Wonder')
             ->assertJsonPath('data.email', 'alice@example.com')
             ->assertJsonPath('data.status', 'active')
+            ->assertJsonPath('data.joined_at', $today)
             ->assertJsonPath('data.membership.plan', 'Monthly')
             ->assertJsonPath('data.membership.price', 45)
-            ->assertJsonPath('data.membership.started_at', '2026-08-01')
-            ->assertJsonPath('data.membership.ends_at', '2026-08-31')
+            ->assertJsonPath('data.membership.started_at', $today)
             ->assertJsonPath('data.payments', []);
 
         $memberId = $response->json('data.id');
@@ -193,26 +192,23 @@ class DashboardApiTest extends TestCase
         $this->assertDatabaseHas('member_subscriptions', ['member_id' => $memberId, 'plan_name' => 'Monthly']);
     }
 
-    public function test_member_store_rejects_invalid_status_and_plan(): void
+    public function test_member_store_rejects_invalid_plan(): void
     {
         [, , $token] = $this->createOwner();
 
         $this->postJson('/api/members', [
             'name' => 'Bad Member',
             'email' => 'bad@example.com',
-            'status' => 'gold',
-            'joined_at' => '2026-08-01',
             'membership' => [
                 'plan' => 'Weekly',
                 'price' => 45,
-                'started_at' => '2026-08-01',
             ],
         ], $this->authHeader($token))
             ->assertUnprocessable()
-            ->assertJsonValidationErrors(['status', 'membership.plan']);
+            ->assertJsonValidationErrors(['membership.plan']);
     }
 
-    public function test_member_update_edits_member_and_membership(): void
+    public function test_member_update_edits_profile_only(): void
     {
         [, $gym, $token] = $this->createOwner();
 
@@ -223,27 +219,128 @@ class DashboardApiTest extends TestCase
             'name' => 'John Smith Jr',
             'email' => 'johnjr@example.com',
             'phone' => '+15551230000',
-            'status' => 'frozen',
-            'joined_at' => '2026-07-01',
-            'membership' => [
-                'plan' => 'Quarterly',
-                'price' => 120,
-                'started_at' => '2026-07-01',
-                'ends_at' => '2026-09-30',
-            ],
         ], $this->authHeader($token))
             ->assertOk()
             ->assertJsonPath('data.name', 'John Smith Jr')
             ->assertJsonPath('data.email', 'johnjr@example.com')
-            ->assertJsonPath('data.status', 'frozen')
-            ->assertJsonPath('data.joined_at', '2026-07-01')
-            ->assertJsonPath('data.membership.plan', 'Quarterly')
-            ->assertJsonPath('data.membership.price', 120)
-            ->assertJsonPath('data.membership.started_at', '2026-07-01')
-            ->assertJsonPath('data.membership.ends_at', '2026-09-30');
+            ->assertJsonPath('data.phone', '+15551230000');
 
-        $this->assertDatabaseHas('members', ['id' => $member->id, 'first_name' => 'John', 'last_name' => 'Smith Jr', 'status' => 'frozen']);
-        $this->assertDatabaseHas('member_subscriptions', ['member_id' => $member->id, 'plan_name' => 'Quarterly']);
+        $this->assertDatabaseHas('members', ['id' => $member->id, 'first_name' => 'John', 'last_name' => 'Smith Jr']);
+    }
+
+    public function test_member_subscribe_creates_subscription_and_sets_active(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $member = $this->createMember($gym, ['status' => 'expired']);
+        MemberSubscription::create([
+            'member_id' => $member->id,
+            'plan_name' => 'Monthly',
+            'price' => 45,
+            'starts_at' => now()->subMonthsNoOverflow(2),
+            'ends_at' => now()->subMonthNoOverflow(),
+        ]);
+
+        $this->postJson("/api/members/{$member->id}/subscribe", [
+            'plan' => 'Quarterly',
+            'price' => 120,
+        ], $this->authHeader($token))
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'active')
+            ->assertJsonPath('data.membership.plan', 'Quarterly');
+
+        $this->assertDatabaseHas('members', ['id' => $member->id, 'status' => 'active']);
+        $this->assertDatabaseHas('member_subscriptions', [
+            'member_id' => $member->id,
+            'plan_name' => 'Quarterly',
+            'price' => 120,
+        ]);
+    }
+
+    public function test_member_subscribe_rejects_already_active(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $member = $this->createMember($gym, ['status' => 'active']);
+        $this->createSubscription($member);
+
+        $this->postJson("/api/members/{$member->id}/subscribe", [
+            'plan' => 'Monthly',
+            'price' => 45,
+        ], $this->authHeader($token))
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Member already has an active subscription.');
+    }
+
+    public function test_member_freeze_sets_frozen_and_nulls_ends_at(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $member = $this->createMember($gym, ['status' => 'active']);
+        $sub = $this->createSubscription($member, [
+            'starts_at' => now()->subMonthNoOverflow(),
+            'ends_at' => now()->addMonthNoOverflow(),
+        ]);
+
+        $this->postJson("/api/members/{$member->id}/freeze", [], $this->authHeader($token))
+            ->assertOk()
+            ->assertJsonPath('data.status', 'frozen');
+
+        $this->assertDatabaseHas('members', ['id' => $member->id, 'status' => 'frozen']);
+        $sub->refresh();
+        $this->assertNotNull($sub->last_freezed_at);
+        $this->assertNotNull($sub->original_ends_at);
+        $this->assertNull($sub->ends_at);
+    }
+
+    public function test_member_freeze_rejects_non_active(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $member = $this->createMember($gym, ['status' => 'expired']);
+
+        $this->postJson("/api/members/{$member->id}/freeze", [], $this->authHeader($token))
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Only active members can be frozen.');
+    }
+
+    public function test_member_unfreeze_restores_active_and_extends_ends_at(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $member = $this->createMember($gym, ['status' => 'frozen']);
+        $originalEnd = now()->addMonthNoOverflow();
+        $sub = MemberSubscription::create([
+            'member_id' => $member->id,
+            'plan_name' => 'Monthly',
+            'price' => 45,
+            'starts_at' => now()->subMonthNoOverflow(),
+            'ends_at' => null,
+            'last_freezed_at' => now()->subDays(10),
+            'original_ends_at' => $originalEnd,
+        ]);
+
+        $this->postJson("/api/members/{$member->id}/unfreeze", [], $this->authHeader($token))
+            ->assertOk()
+            ->assertJsonPath('data.status', 'active');
+
+        $this->assertDatabaseHas('members', ['id' => $member->id, 'status' => 'active']);
+        $sub->refresh();
+        $this->assertNotNull($sub->last_unfreezed_at);
+        $this->assertNull($sub->original_ends_at);
+        $this->assertNotNull($sub->ends_at);
+        $this->assertTrue(Carbon::parse($sub->ends_at)->gt($originalEnd));
+    }
+
+    public function test_member_unfreeze_rejects_non_frozen(): void
+    {
+        [, $gym, $token] = $this->createOwner();
+
+        $member = $this->createMember($gym, ['status' => 'active']);
+
+        $this->postJson("/api/members/{$member->id}/unfreeze", [], $this->authHeader($token))
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Only frozen members can be unfrozen.');
     }
 
     public function test_member_update_and_delete_reject_foreign_members(): void
