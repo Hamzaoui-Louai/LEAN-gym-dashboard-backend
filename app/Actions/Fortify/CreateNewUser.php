@@ -34,11 +34,15 @@ class CreateNewUser implements CreatesNewUsers
             'password' => $this->passwordRules(),
         ])->validate();
 
-        return User::create([
+        $user = User::create([
             'name' => $input['name'],
             'email' => $input['email'],
             'password' => Hash::make($input['password']),
         ]);
+
+        $this->createDefaultGym($user, $input['name']);
+
+        return $user;
     }
 
     /**
@@ -80,6 +84,16 @@ class CreateNewUser implements CreatesNewUsers
 
         $user->markEmailAsVerified();
 
+        $this->createDefaultGym($user, $input['name']);
+
         return $user;
+    }
+
+    private function createDefaultGym(User $user, string $ownerName): void
+    {
+        $user->gym()->create([
+            'name' => $ownerName."'s Gym",
+            'status' => 'active',
+        ]);
     }
 }
